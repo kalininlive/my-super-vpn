@@ -1,0 +1,13 @@
+# Секреты (не коммитить!)
+.env
+secret.txt
+config.env
+
+# Данные
+prometheus_data/
+grafana_data/
+data/
+
+# IDE / tools
+.claude/
+AI_STUDIO_Privacy_Policy.md

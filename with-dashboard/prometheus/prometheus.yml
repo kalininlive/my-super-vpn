@@ -1,0 +1,25 @@
+# =============================================================================
+# Prometheus — Конфигурация сбора метрик MTProto Proxy
+# =============================================================================
+
+global:
+  scrape_interval: 15s        # Как часто собирать метрики
+  evaluation_interval: 15s    # Как часто оценивать правила
+  scrape_timeout: 10s
+
+scrape_configs:
+
+  # Метрики самого Prometheus
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Метрики MTProto Proxy (mtg)
+  - job_name: 'mtproto-proxy'
+    metrics_path: '/'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['mtproto-proxy:3129']
+        labels:
+          instance: 'proxy-main'
+          alias: 'MTProto Proxy'
