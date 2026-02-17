@@ -117,16 +117,14 @@ cat > "$WORK_DIR/mtg-config.toml" << EOF
 # MTG Configuration (auto-generated)
 secret = "${FAKE_TLS_SECRET}"
 bind-to = "0.0.0.0:3128"
+domain-fronting-port = 443
+tolerate-time-skewness = "30s"
 
-[stats]
-bind-to = "0.0.0.0:3129"
-
-[network]
-buffer-size = 65536
-timeout = "30s"
-
-[defense.anti-replay]
+[stats.prometheus]
 enabled = true
+bind-to = "0.0.0.0:3129"
+http-path = "/"
+metric-prefix = "mtg"
 EOF
 
 # --- Открываем порт Grafana в фаерволе ---

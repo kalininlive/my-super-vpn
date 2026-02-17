@@ -1,31 +1,24 @@
 # =============================================================================
 # Конфигурация mtg (MTProto Proxy)
+# Этот файл — шаблон. deploy.sh перезапишет его автоматически.
 # Документация: https://github.com/9seconds/mtg
 # =============================================================================
 
-# Секрет для подключения. Формат для Fake-TLS:
-# ee + hex(secret) + hex(domain)
-# Скрипт deploy.sh сгенерирует это автоматически.
-# Пока оставьте плейсхолдер — он будет заменён при деплое.
+# Секрет генерируется через: docker run --rm nineseconds/mtg:2 generate-secret --hex google.com
 secret = "PLACEHOLDER"
 
 # Адрес, на котором слушает прокси (внутри Docker)
 bind-to = "0.0.0.0:3128"
 
+# Порт для domain fronting (маскировка под HTTPS)
+domain-fronting-port = 443
+
+# Допуск расхождения времени между клиентом и сервером
+tolerate-time-skewness = "30s"
+
 # --- Статистика (Prometheus) ---
-# Порт для метрик — Prometheus будет собирать данные отсюда
-stats.bind-to = "0.0.0.0:3129"
-
-# --- Производительность ---
-# Буфер для соединений (байт). По умолчанию 65536.
-network.buffer-size = 65536
-
-# Таймаут для TCP-соединений
-network.timeout = "30s"
-
-# --- Безопасность ---
-# Защита от replay-атак
-defense.anti-replay.enabled = true
-
-# Максимум одновременных соединений (0 = без лимита)
-defense.concurrency = 0
+[stats.prometheus]
+enabled = true
+bind-to = "0.0.0.0:3129"
+http-path = "/"
+metric-prefix = "mtg"
