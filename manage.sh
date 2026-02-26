@@ -106,9 +106,12 @@ show_info() {
     echo "  Сервер:       ${SERVER_IP}"
     echo "  Порт:         ${PROXY_PORT}"
     echo "  Секрет:       ${PROXY_SECRET}"
+    if [ -n "${PROXY_TAG:-}" ]; then
+        echo "  TAG:          ${PROXY_TAG}"
+    fi
     echo "  Fake-TLS:     ${FAKE_TLS_DOMAIN}"
     echo ""
-    echo "Ссылка для пользователей (Fake-TLS):"
+    echo "Ссылка с Fake-TLS (рекомендуется):"
     echo ""
     echo "  tg://proxy?server=${SERVER_IP}&port=${PROXY_PORT}&secret=${FAKE_TLS_SECRET}"
     echo ""
@@ -131,13 +134,20 @@ update_image() {
     docker stop "$CONTAINER_NAME" 2>/dev/null || true
     docker rm "$CONTAINER_NAME" 2>/dev/null || true
 
-    docker run -d \
-        --name "$CONTAINER_NAME" \
-        --restart always \
-        -p "${PROXY_PORT}:443" \
-        -v "${DATA_DIR}/data:/data" \
-        -e SECRET="$PROXY_SECRET" \
-        telegrammessenger/proxy:latest
+    DOCKER_ARGS=(
+        -d
+        --name "$CONTAINER_NAME"
+        --restart always
+        -p "${PROXY_PORT}:443"
+        -v "${DATA_DIR}/data:/data"
+        -e "SECRET=$PROXY_SECRET"
+    )
+
+    if [ -n "${PROXY_TAG:-}" ]; then
+        DOCKER_ARGS+=(-e "TAG=$PROXY_TAG")
+    fi
+
+    docker run "${DOCKER_ARGS[@]}" telegrammessenger/proxy:latest
 
     sleep 2
     echo -e "${GREEN}Обновление завершено!${NC}"
@@ -158,17 +168,23 @@ new_secret() {
         exit 1
     fi
 
-    read -p "Домен для Fake-TLS [по умолчанию: google.com]: " NEW_DOMAIN
+    read -p "Введите TAG (proxy tag, Enter чтобы оставить прежний): " NEW_TAG
+
+    read -p "Домен для Fake-TLS [google.com]: " NEW_DOMAIN
     NEW_DOMAIN=${NEW_DOMAIN:-google.com}
 
     DOMAIN_HEX=$(echo -n "$NEW_DOMAIN" | xxd -p | tr -d '\n')
     NEW_FAKE_SECRET="ee${NEW_SECRET}${DOMAIN_HEX}"
 
+    # Читаем старый конфиг для значений по умолчанию
+    source "$DATA_DIR/config.env" 2>/dev/null || true
+    NEW_TAG="${NEW_TAG:-${PROXY_TAG:-}}"
+
     # Обновляем конфиг
-    source "$DATA_DIR/config.env"
     cat > "$DATA_DIR/config.env" << EOF
 PROXY_SECRET=${NEW_SECRET}
-PROXY_PORT=${PROXY_PORT}
+PROXY_TAG=${NEW_TAG}
+PROXY_PORT=${PROXY_PORT:-443}
 FAKE_TLS_DOMAIN=${NEW_DOMAIN}
 FAKE_TLS_SECRET=${NEW_FAKE_SECRET}
 EOF
@@ -180,13 +196,20 @@ EOF
     docker stop "$CONTAINER_NAME" 2>/dev/null || true
     docker rm "$CONTAINER_NAME" 2>/dev/null || true
 
-    docker run -d \
-        --name "$CONTAINER_NAME" \
-        --restart always \
-        -p "${PROXY_PORT}:443" \
-        -v "${DATA_DIR}/data:/data" \
-        -e SECRET="$NEW_SECRET" \
-        telegrammessenger/proxy:latest
+    DOCKER_ARGS=(
+        -d
+        --name "$CONTAINER_NAME"
+        --restart always
+        -p "${PROXY_PORT:-443}:443"
+        -v "${DATA_DIR}/data:/data"
+        -e "SECRET=$NEW_SECRET"
+    )
+
+    if [ -n "${NEW_TAG:-}" ]; then
+        DOCKER_ARGS+=(-e "TAG=$NEW_TAG")
+    fi
+
+    docker run "${DOCKER_ARGS[@]}" telegrammessenger/proxy:latest
 
     sleep 2
     echo ""
@@ -202,20 +225,18 @@ migrate_server() {
     echo "Когда РКН заблокирует IP вашего сервера, вам нужно:"
     echo ""
     echo "  1. Арендовать новый VPS"
-    echo "  2. Скопировать файлы на новый сервер:"
-    echo "     scp setup-vps.sh deploy-mtproto.sh manage.sh root@НОВЫЙ_IP:~/"
+    echo "  2. На новом сервере:"
+    echo "     git clone https://github.com/kalininlive/my-super-vpn.git"
+    echo "     cd my-super-vpn"
+    echo "     chmod +x setup-vps.sh && ./setup-vps.sh"
+    echo "     chmod +x with-dashboard/deploy.sh && cd with-dashboard && ./deploy.sh"
     echo ""
-    echo "  3. На новом сервере выполнить:"
-    echo "     chmod +x setup-vps.sh deploy-mtproto.sh manage.sh"
-    echo "     ./setup-vps.sh"
-    echo "     ./deploy-mtproto.sh"
+    echo "  3. В @MTProxybot обновить IP прокси на новый"
     echo ""
-    echo "  4. В @MTProxybot обновить IP прокси на новый"
+    echo "  4. Если есть домен — обновить A-запись на новый IP"
+    echo "     Тогда пользователям не нужна новая ссылка!"
     echo ""
-    echo "  5. Отправить новую ссылку пользователям"
-    echo ""
-    echo -e "${YELLOW}Совет: используйте короткую ссылку (t.me/proxy?...) через"
-    echo -e "свой Telegram-канал, чтобы пользователи всегда имели актуальную ссылку.${NC}"
+    echo -e "${YELLOW}Совет: используйте домен, чтобы при смене IP не раздавать новые ссылки.${NC}"
 }
 
 uninstall_proxy() {

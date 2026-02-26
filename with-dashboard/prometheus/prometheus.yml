@@ -1,10 +1,10 @@
 # =============================================================================
-# Prometheus — Конфигурация сбора метрик MTProto Proxy
+# Prometheus — Конфигурация сбора метрик сервера
 # =============================================================================
 
 global:
-  scrape_interval: 15s        # Как часто собирать метрики
-  evaluation_interval: 15s    # Как часто оценивать правила
+  scrape_interval: 15s
+  evaluation_interval: 15s
   scrape_timeout: 10s
 
 scrape_configs:
@@ -14,12 +14,11 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  # Метрики MTProto Proxy (mtg)
-  - job_name: 'mtproto-proxy'
-    metrics_path: '/'
+  # Метрики сервера (CPU, RAM, сеть, диск)
+  - job_name: 'node-exporter'
     scrape_interval: 10s
     static_configs:
-      - targets: ['mtproto-proxy:3129']
+      - targets: ['node-exporter:9100']
         labels:
-          instance: 'proxy-main'
-          alias: 'MTProto Proxy'
+          instance: 'proxy-server'
+          alias: 'MTProto Proxy Server'

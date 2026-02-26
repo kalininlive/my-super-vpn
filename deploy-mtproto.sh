@@ -58,6 +58,11 @@ if [ -z "$PROXY_SECRET" ]; then
     exit 1
 fi
 
+read -p "Введите TAG (proxy tag от @MTProxybot, для промо-канала): " PROXY_TAG
+if [ -z "$PROXY_TAG" ]; then
+    echo -e "${YELLOW}TAG не указан — промо-канал не будет работать.${NC}"
+fi
+
 # Сохраняем секрет для дальнейшего использования
 echo "$PROXY_SECRET" > "$DATA_DIR/secret.txt"
 chmod 600 "$DATA_DIR/secret.txt"
@@ -84,6 +89,7 @@ echo "Fake-TLS домен: $FAKE_TLS_DOMAIN"
 # Сохраняем конфигурацию
 cat > "$DATA_DIR/config.env" << EOF
 PROXY_SECRET=${PROXY_SECRET}
+PROXY_TAG=${PROXY_TAG}
 PROXY_PORT=${PROXY_PORT}
 FAKE_TLS_DOMAIN=${FAKE_TLS_DOMAIN}
 FAKE_TLS_SECRET=${FAKE_TLS_SECRET}
@@ -96,13 +102,20 @@ echo "Запуск MTProto Proxy..."
 
 docker pull telegrammessenger/proxy:latest
 
-docker run -d \
-    --name "$CONTAINER_NAME" \
-    --restart always \
-    -p "${PROXY_PORT}:443" \
-    -v "${DATA_DIR}/data:/data" \
-    -e SECRET="$PROXY_SECRET" \
-    telegrammessenger/proxy:latest
+DOCKER_ARGS=(
+    -d
+    --name "$CONTAINER_NAME"
+    --restart always
+    -p "${PROXY_PORT}:443"
+    -v "${DATA_DIR}/data:/data"
+    -e "SECRET=$PROXY_SECRET"
+)
+
+if [ -n "${PROXY_TAG:-}" ]; then
+    DOCKER_ARGS+=(-e "TAG=$PROXY_TAG")
+fi
+
+docker run "${DOCKER_ARGS[@]}" telegrammessenger/proxy:latest
 
 # --- Проверка запуска ---
 sleep 3
@@ -120,14 +133,14 @@ if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
     echo "  Сервер:  ${SERVER_IP}"
     echo "  Порт:    ${PROXY_PORT}"
     echo "  Секрет:  ${PROXY_SECRET}"
-    echo ""
-    echo "Ссылка для подключения (без Fake-TLS):"
-    echo "  tg://proxy?server=${SERVER_IP}&port=${PROXY_PORT}&secret=${PROXY_SECRET}"
+    if [ -n "${PROXY_TAG:-}" ]; then
+        echo "  TAG:     ${PROXY_TAG} (промо-канал активен)"
+    fi
     echo ""
     echo "Ссылка для подключения (с Fake-TLS, рекомендуется):"
     echo "  tg://proxy?server=${SERVER_IP}&port=${PROXY_PORT}&secret=${FAKE_TLS_SECRET}"
     echo ""
-    echo "Веб-ссылка (с Fake-TLS):"
+    echo "Веб-ссылка:"
     echo "  https://t.me/proxy?server=${SERVER_IP}&port=${PROXY_PORT}&secret=${FAKE_TLS_SECRET}"
     echo ""
     echo -e "${YELLOW}Сохраните эти данные! Они также записаны в ${DATA_DIR}/config.env${NC}"

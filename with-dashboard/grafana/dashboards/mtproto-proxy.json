@@ -24,10 +24,11 @@
           "thresholds": {
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 100 },
-              { "color": "red", "value": 500 }
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 80 }
             ]
           },
+          "unit": "percent",
           "mappings": []
         }
       },
@@ -41,12 +42,12 @@
         "reduceOptions": { "calcs": ["lastNotNull"] },
         "textMode": "auto"
       },
-      "title": "Активные соединения",
+      "title": "CPU",
       "type": "stat",
       "targets": [
         {
-          "expr": "mtg_client_connections",
-          "legendFormat": "Клиенты",
+          "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+          "legendFormat": "CPU",
           "refId": "A"
         }
       ]
@@ -58,9 +59,12 @@
           "color": { "mode": "thresholds" },
           "thresholds": {
             "steps": [
-              { "color": "blue", "value": null }
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 60 },
+              { "color": "red", "value": 85 }
             ]
           },
+          "unit": "percent",
           "mappings": []
         }
       },
@@ -74,12 +78,12 @@
         "reduceOptions": { "calcs": ["lastNotNull"] },
         "textMode": "auto"
       },
-      "title": "Соединения с Telegram DC",
+      "title": "RAM",
       "type": "stat",
       "targets": [
         {
-          "expr": "mtg_telegram_connections",
-          "legendFormat": "DC",
+          "expr": "(1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100",
+          "legendFormat": "RAM",
           "refId": "A"
         }
       ]
@@ -91,10 +95,12 @@
           "color": { "mode": "thresholds" },
           "thresholds": {
             "steps": [
-              { "color": "orange", "value": null }
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 70 },
+              { "color": "red", "value": 90 }
             ]
           },
-          "unit": "decbytes",
+          "unit": "percent",
           "mappings": []
         }
       },
@@ -108,12 +114,12 @@
         "reduceOptions": { "calcs": ["lastNotNull"] },
         "textMode": "auto"
       },
-      "title": "Трафик от клиентов (всего)",
+      "title": "Disk",
       "type": "stat",
       "targets": [
         {
-          "expr": "mtg_client_bytes_read + mtg_client_bytes_written",
-          "legendFormat": "Всего",
+          "expr": "100 - ((node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"rootfs\"} * 100) / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"rootfs\"})",
+          "legendFormat": "Disk",
           "refId": "A"
         }
       ]
@@ -125,8 +131,9 @@
           "color": { "mode": "thresholds" },
           "thresholds": {
             "steps": [
-              { "color": "red", "value": null },
-              { "color": "green", "value": 0 }
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 2 },
+              { "color": "red", "value": 4 }
             ]
           },
           "mappings": []
@@ -136,18 +143,18 @@
       "id": 4,
       "options": {
         "colorMode": "background",
-        "graphMode": "none",
+        "graphMode": "area",
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": { "calcs": ["lastNotNull"] },
         "textMode": "auto"
       },
-      "title": "Replay-атаки обнаружено",
+      "title": "System Load (1m)",
       "type": "stat",
       "targets": [
         {
-          "expr": "mtg_replay_attacks",
-          "legendFormat": "Атаки",
+          "expr": "node_load1",
+          "legendFormat": "Load",
           "refId": "A"
         }
       ]
@@ -156,7 +163,7 @@
       "collapsed": false,
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
       "id": 101,
-      "title": "Соединения",
+      "title": "Сетевой трафик",
       "type": "row"
     },
     {
@@ -165,7 +172,7 @@
         "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": {
-            "axisLabel": "Соединения",
+            "axisLabel": "",
             "drawStyle": "line",
             "fillOpacity": 20,
             "lineWidth": 2,
@@ -173,7 +180,8 @@
             "showPoints": "auto",
             "spanNulls": false,
             "stacking": { "mode": "none" }
-          }
+          },
+          "unit": "Bps"
         }
       },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
@@ -182,91 +190,17 @@
         "legend": { "displayMode": "list", "placement": "bottom" },
         "tooltip": { "mode": "multi" }
       },
-      "title": "Клиентские соединения (история)",
+      "title": "Скорость трафика (байт/сек)",
       "type": "timeseries",
       "targets": [
         {
-          "expr": "mtg_client_connections",
-          "legendFormat": "Клиенты",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisLabel": "Соединения",
-            "drawStyle": "line",
-            "fillOpacity": 20,
-            "lineWidth": 2,
-            "pointSize": 5,
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": { "mode": "none" }
-          }
-        }
-      },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
-      "id": 6,
-      "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
-      },
-      "title": "Соединения с Telegram DC (история)",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "mtg_telegram_connections",
-          "legendFormat": "DC серверы",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
-      "id": 102,
-      "title": "Трафик",
-      "type": "row"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisLabel": "Байт/сек",
-            "drawStyle": "line",
-            "fillOpacity": 30,
-            "lineWidth": 2,
-            "pointSize": 5,
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": { "mode": "normal" }
-          },
-          "unit": "Bps"
-        }
-      },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "id": 7,
-      "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
-      },
-      "title": "Трафик клиентов (скорость)",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "rate(mtg_client_bytes_read[5m])",
-          "legendFormat": "Входящий (от клиентов)",
+          "expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[5m])",
+          "legendFormat": "Входящий ({{device}})",
           "refId": "A"
         },
         {
-          "expr": "rate(mtg_client_bytes_written[5m])",
-          "legendFormat": "Исходящий (к клиентам)",
+          "expr": "rate(node_network_transmit_bytes_total{device!=\"lo\"}[5m])",
+          "legendFormat": "Исходящий ({{device}})",
           "refId": "B"
         }
       ]
@@ -277,53 +211,7 @@
         "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": {
-            "axisLabel": "Байт/сек",
-            "drawStyle": "line",
-            "fillOpacity": 30,
-            "lineWidth": 2,
-            "pointSize": 5,
-            "showPoints": "auto",
-            "spanNulls": false,
-            "stacking": { "mode": "normal" }
-          },
-          "unit": "Bps"
-        }
-      },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
-      "id": 8,
-      "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi" }
-      },
-      "title": "Трафик к Telegram (скорость)",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "rate(mtg_telegram_bytes_read[5m])",
-          "legendFormat": "Входящий (от Telegram)",
-          "refId": "A"
-        },
-        {
-          "expr": "rate(mtg_telegram_bytes_written[5m])",
-          "legendFormat": "Исходящий (к Telegram)",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
-      "id": 103,
-      "title": "Кумулятивный трафик",
-      "type": "row"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisLabel": "Объём",
+            "axisLabel": "",
             "drawStyle": "line",
             "fillOpacity": 10,
             "lineWidth": 2,
@@ -335,8 +223,8 @@
           "unit": "decbytes"
         }
       },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 25 },
-      "id": 9,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "id": 6,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
         "tooltip": { "mode": "multi" }
@@ -345,32 +233,96 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "mtg_client_bytes_read",
-          "legendFormat": "Клиенты → Прокси",
+          "expr": "node_network_receive_bytes_total{device!=\"lo\"}",
+          "legendFormat": "Получено ({{device}})",
           "refId": "A"
         },
         {
-          "expr": "mtg_client_bytes_written",
-          "legendFormat": "Прокси → Клиенты",
+          "expr": "node_network_transmit_bytes_total{device!=\"lo\"}",
+          "legendFormat": "Отправлено ({{device}})",
           "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "mode": "none" }
+          },
+          "unit": "pps"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "id": 7,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "title": "Пакеты в секунду",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(node_network_receive_packets_total{device!=\"lo\"}[5m])",
+          "legendFormat": "Входящие пакеты ({{device}})",
+          "refId": "A"
         },
         {
-          "expr": "mtg_telegram_bytes_read",
-          "legendFormat": "Telegram → Прокси",
-          "refId": "C"
+          "expr": "rate(node_network_transmit_packets_total{device!=\"lo\"}[5m])",
+          "legendFormat": "Исходящие пакеты ({{device}})",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "bars",
+            "fillOpacity": 50,
+            "lineWidth": 1,
+            "stacking": { "mode": "none" }
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "id": 8,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "title": "Ошибки сети",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(node_network_receive_errs_total{device!=\"lo\"}[5m])",
+          "legendFormat": "Ошибки приёма ({{device}})",
+          "refId": "A"
         },
         {
-          "expr": "mtg_telegram_bytes_written",
-          "legendFormat": "Прокси → Telegram",
-          "refId": "D"
+          "expr": "rate(node_network_transmit_errs_total{device!=\"lo\"}[5m])",
+          "legendFormat": "Ошибки отправки ({{device}})",
+          "refId": "B"
         }
       ]
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
-      "id": 104,
-      "title": "Безопасность",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "id": 102,
+      "title": "Ресурсы сервера",
       "type": "row"
     },
     {
@@ -379,25 +331,72 @@
         "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": {
-            "drawStyle": "bars",
-            "fillOpacity": 50,
-            "lineWidth": 1
-          }
+            "axisLabel": "%",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "mode": "none" }
+          },
+          "unit": "percent",
+          "max": 100,
+          "min": 0
         }
       },
-      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 34 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "id": 9,
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "title": "CPU (история)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+          "legendFormat": "CPU %",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisLabel": "",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "mode": "none" }
+          },
+          "unit": "decbytes"
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
       "id": 10,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
         "tooltip": { "mode": "multi" }
       },
-      "title": "Replay-атаки",
+      "title": "RAM (история)",
       "type": "timeseries",
       "targets": [
         {
-          "expr": "rate(mtg_replay_attacks[5m])",
-          "legendFormat": "Replay/сек",
+          "expr": "node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes",
+          "legendFormat": "Использовано",
           "refId": "A"
+        },
+        {
+          "expr": "node_memory_MemAvailable_bytes",
+          "legendFormat": "Доступно",
+          "refId": "B"
         }
       ]
     },
@@ -407,25 +406,40 @@
         "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": {
-            "drawStyle": "bars",
-            "fillOpacity": 50,
-            "lineWidth": 1
+            "axisLabel": "",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": { "mode": "none" }
           }
         }
       },
-      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 34 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
       "id": 11,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
         "tooltip": { "mode": "multi" }
       },
-      "title": "Отклонено (лимит)",
+      "title": "System Load",
       "type": "timeseries",
       "targets": [
         {
-          "expr": "rate(mtg_concurrency_limited[5m])",
-          "legendFormat": "Отклонено/сек",
+          "expr": "node_load1",
+          "legendFormat": "Load 1m",
           "refId": "A"
+        },
+        {
+          "expr": "node_load5",
+          "legendFormat": "Load 5m",
+          "refId": "B"
+        },
+        {
+          "expr": "node_load15",
+          "legendFormat": "Load 15m",
+          "refId": "C"
         }
       ]
     },
@@ -435,25 +449,36 @@
         "defaults": {
           "color": { "mode": "palette-classic" },
           "custom": {
+            "axisLabel": "",
             "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 2
-          }
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "mode": "none" }
+          },
+          "unit": "decbytes"
         }
       },
-      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 34 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
       "id": 12,
       "options": {
         "legend": { "displayMode": "list", "placement": "bottom" },
         "tooltip": { "mode": "multi" }
       },
-      "title": "Domain Fronting соединения",
+      "title": "Дисковое пространство",
       "type": "timeseries",
       "targets": [
         {
-          "expr": "mtg_domain_fronting_connections",
-          "legendFormat": "Domain Fronting",
+          "expr": "node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"rootfs\"} - node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"rootfs\"}",
+          "legendFormat": "Использовано",
           "refId": "A"
+        },
+        {
+          "expr": "node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"rootfs\"}",
+          "legendFormat": "Свободно",
+          "refId": "B"
         }
       ]
     }
@@ -461,7 +486,7 @@
   "refresh": "10s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["mtproto", "proxy", "telegram"],
+  "tags": ["mtproto", "proxy", "telegram", "server"],
   "templating": {
     "list": [
       {
@@ -488,7 +513,7 @@
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
   "timezone": "",
-  "title": "MTProto Proxy — Статистика",
+  "title": "MTProto Proxy Server",
   "uid": "mtproto-proxy-stats",
   "version": 1
 }

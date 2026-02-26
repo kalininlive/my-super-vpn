@@ -1,6 +1,8 @@
 #!/bin/bash
 # =============================================================================
 # deploy.sh — Развертывание MTProto Proxy + Grafana Dashboard
+# Использует официальный образ от Telegram (telegrammessenger/proxy)
+# с поддержкой TAG (промо-канал) и Fake-TLS маскировки.
 # Запускать от root на сервере, ПОСЛЕ выполнения setup-vps.sh
 # =============================================================================
 
@@ -33,14 +35,25 @@ fi
 # --- Сбор конфигурации ---
 echo -e "${CYAN}Шаг 1: Конфигурация MTProto Proxy${NC}"
 echo ""
-echo "Перед продолжением получите SECRET у @MTProxybot в Telegram."
-echo "(Инструкция: /newproxy -> ввести IP и порт 443)"
+echo "Перед продолжением зарегистрируйте прокси в @MTProxybot в Telegram."
+echo ""
+echo "  1. Откройте @MTProxybot"
+echo "  2. Отправьте /newproxy"
+echo "  3. Введите IP сервера и порт 443"
+echo "  4. Бот попросит secret — сгенерируйте: openssl rand -hex 16"
+echo "  5. Бот выдаст proxy tag — скопируйте его"
+echo "  6. Через бота привяжите промо-канал (Promoted Channel)"
 echo ""
 
-read -p "Введите SECRET от @MTProxybot: " PROXY_SECRET
+read -p "Введите SECRET (32 hex-символа от @MTProxybot): " PROXY_SECRET
 if [ -z "$PROXY_SECRET" ]; then
     echo -e "${RED}SECRET не может быть пустым!${NC}"
     exit 1
+fi
+
+read -p "Введите TAG (proxy tag от @MTProxybot): " PROXY_TAG
+if [ -z "$PROXY_TAG" ]; then
+    echo -e "${YELLOW}TAG не указан — промо-канал не будет работать.${NC}"
 fi
 
 read -p "Порт прокси [443]: " PROXY_PORT
@@ -63,37 +76,23 @@ read -sp "Пароль Grafana [admin]: " GRAFANA_PASSWORD
 GRAFANA_PASSWORD=${GRAFANA_PASSWORD:-admin}
 echo ""
 
-# --- Генерация Fake-TLS секрета ---
-# mtg v2 использует формат: generate secret с помощью утилиты mtg
-# Для начала генерируем через mtg generate
+# --- Генерация Fake-TLS секрета для ссылки ---
 echo ""
-echo "Генерация Fake-TLS секрета..."
+echo "Генерация Fake-TLS секрета для ссылки..."
 
-# Скачиваем mtg для генерации секрета
-docker pull nineseconds/mtg:2 > /dev/null 2>&1
-FAKE_TLS_SECRET=$(docker run --rm nineseconds/mtg:2 generate-secret --hex "$FAKE_TLS_DOMAIN" 2>/dev/null || echo "")
+DOMAIN_HEX=$(echo -n "$FAKE_TLS_DOMAIN" | xxd -p | tr -d '\n')
+FAKE_TLS_SECRET="ee${PROXY_SECRET}${DOMAIN_HEX}"
 
-if [ -z "$FAKE_TLS_SECRET" ]; then
-    # Fallback: генерируем вручную
-    RANDOM_HEX=$(openssl rand -hex 16)
-    DOMAIN_HEX=$(echo -n "$FAKE_TLS_DOMAIN" | xxd -p | tr -d '\n')
-    FAKE_TLS_SECRET="ee${RANDOM_HEX}${DOMAIN_HEX}"
-    echo -e "${YELLOW}Секрет сгенерирован (fallback метод)${NC}"
-else
-    echo -e "${GREEN}Секрет сгенерирован через mtg${NC}"
-fi
-
-echo "Fake-TLS секрет: $FAKE_TLS_SECRET"
+echo -e "${GREEN}Fake-TLS секрет: ${FAKE_TLS_SECRET}${NC}"
 
 # --- Создание рабочей директории ---
 echo ""
 echo "Создание рабочей директории: $WORK_DIR"
 mkdir -p "$WORK_DIR"
 
-# Копируем структуру (предполагаем что скрипт лежит рядом с docker-compose.yml)
+# Копируем структуру
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Копируем все файлы
 cp -r "$SCRIPT_DIR"/* "$WORK_DIR/" 2>/dev/null || true
 cp "$SCRIPT_DIR"/.env "$WORK_DIR/" 2>/dev/null || true
 
@@ -102,32 +101,17 @@ cd "$WORK_DIR"
 # --- Генерация .env ---
 cat > "$WORK_DIR/.env" << EOF
 PROXY_SECRET=${PROXY_SECRET}
+PROXY_TAG=${PROXY_TAG}
 PROXY_PORT=${PROXY_PORT}
 FAKE_TLS_DOMAIN=${FAKE_TLS_DOMAIN}
 FAKE_TLS_SECRET=${FAKE_TLS_SECRET}
 GRAFANA_PORT=${GRAFANA_PORT}
 GRAFANA_USER=${GRAFANA_USER}
 GRAFANA_PASSWORD=${GRAFANA_PASSWORD}
-MTG_DEBUG=false
 EOF
 chmod 600 "$WORK_DIR/.env"
 
-# --- Генерация mtg-config.toml ---
-cat > "$WORK_DIR/mtg-config.toml" << EOF
-# MTG Configuration (auto-generated)
-secret = "${FAKE_TLS_SECRET}"
-bind-to = "0.0.0.0:3128"
-domain-fronting-port = 443
-tolerate-time-skewness = "30s"
-
-[stats.prometheus]
-enabled = true
-bind-to = "0.0.0.0:3129"
-http-path = "/"
-metric-prefix = "mtg"
-EOF
-
-# --- Открываем порт Grafana в фаерволе ---
+# --- Открываем порты в фаерволе ---
 echo ""
 echo "Настройка фаервола..."
 ufw allow "${PROXY_PORT}/tcp" comment 'MTProto Proxy' 2>/dev/null || true
@@ -156,6 +140,13 @@ if docker ps --format '{{.Names}}' | grep -q "mtproto-proxy"; then
     echo -e "  MTProto Proxy: ${GREEN}Работает${NC}"
 else
     echo -e "  MTProto Proxy: ${RED}Не запущен!${NC}"
+    ALL_OK=false
+fi
+
+if docker ps --format '{{.Names}}' | grep -q "node-exporter"; then
+    echo -e "  Node Exporter: ${GREEN}Работает${NC}"
+else
+    echo -e "  Node Exporter: ${RED}Не запущен!${NC}"
     ALL_OK=false
 fi
 
@@ -195,9 +186,7 @@ echo "  URL:    http://${SERVER_IP}:${GRAFANA_PORT}"
 echo "  Логин:  ${GRAFANA_USER}"
 echo "  Пароль: ${GRAFANA_PASSWORD}"
 echo ""
-echo "  Дашборд 'MTProto Proxy — Статистика' уже настроен!"
-echo "  Откройте: Dashboards -> MTProto Proxy -> MTProto Proxy — Статистика"
-echo ""
+
 echo -e "${CYAN}=== ССЫЛКИ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ===${NC}"
 echo ""
 echo "  Ссылка с Fake-TLS (рекомендуется):"
@@ -206,14 +195,22 @@ echo ""
 echo "  Веб-ссылка:"
 echo "  https://t.me/proxy?server=${SERVER_IP}&port=${PROXY_PORT}&secret=${FAKE_TLS_SECRET}"
 echo ""
+
+if [ -n "$PROXY_TAG" ]; then
+    echo -e "${GREEN}  Промо-канал: TAG=${PROXY_TAG} (активен)${NC}"
+else
+    echo -e "${YELLOW}  Промо-канал: не настроен (TAG не указан)${NC}"
+fi
+
+echo ""
 echo -e "${CYAN}=== УПРАВЛЕНИЕ ===${NC}"
 echo ""
 echo "  cd $WORK_DIR"
-echo "  docker compose logs -f          # Логи всех сервисов"
+echo "  docker compose logs -f             # Логи всех сервисов"
 echo "  docker compose logs mtproto-proxy  # Логи прокси"
-echo "  docker compose restart           # Перезапуск"
-echo "  docker compose down              # Остановка"
-echo "  docker compose up -d             # Запуск"
+echo "  docker compose restart             # Перезапуск"
+echo "  docker compose down                # Остановка"
+echo "  docker compose up -d               # Запуск"
 echo ""
 echo -e "${YELLOW}Конфигурация сохранена в: ${WORK_DIR}/.env${NC}"
 echo ""

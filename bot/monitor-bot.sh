@@ -5,6 +5,7 @@
 # Функции:
 #   /status   — статус всех сервисов
 #   /restart  — перезапуск прокси
+#   /restartall — перезапуск всех сервисов
 #   /logs     — последние логи
 #   /traffic  — статистика трафика
 #   /ip       — показать IP сервера
@@ -22,6 +23,9 @@ set -euo pipefail
 BOT_TOKEN="${BOT_TOKEN:-}"
 ADMIN_CHAT_ID="${ADMIN_CHAT_ID:-}"
 CHECK_INTERVAL="${CHECK_INTERVAL:-30}"  # Секунды между проверками
+
+# --- Файл конфигурации прокси ---
+PROXY_ENV="/opt/mtproto-dashboard/.env"
 
 # --- Файл состояния ---
 STATE_FILE="/tmp/mtproto-monitor-state"
@@ -90,28 +94,31 @@ get_disk_usage() {
     df / | tail -1 | awk '{print $5}' | tr -d '%' 2>/dev/null || echo "0"
 }
 
-get_traffic_stats() {
-    # Запрашиваем метрики через Prometheus API (доступен на localhost:9090)
-    local stats
-    stats=$(curl -s "http://localhost:9090/api/v1/query?query=mtg_client_connections" 2>/dev/null || echo "")
-    if echo "$stats" | grep -q '"status":"success"'; then
-        echo "available"
+# --- Чтение конфигурации прокси ---
+get_proxy_link() {
+    if [ -f "$PROXY_ENV" ]; then
+        local secret domain domain_hex fake_tls_secret
+        secret=$(grep '^PROXY_SECRET=' "$PROXY_ENV" 2>/dev/null | cut -d= -f2 || echo "")
+        domain=$(grep '^FAKE_TLS_DOMAIN=' "$PROXY_ENV" 2>/dev/null | cut -d= -f2 || echo "google.com")
+        fake_tls_secret=$(grep '^FAKE_TLS_SECRET=' "$PROXY_ENV" 2>/dev/null | cut -d= -f2 || echo "")
+
+        if [ -z "$fake_tls_secret" ] && [ -n "$secret" ]; then
+            domain_hex=$(echo -n "${domain:-google.com}" | xxd -p | tr -d '\n')
+            fake_tls_secret="ee${secret}${domain_hex}"
+        fi
+
+        echo "$fake_tls_secret"
     else
-        echo "unavailable"
+        echo ""
     fi
 }
 
-query_prometheus() {
-    local metric="$1"
-    curl -s "http://localhost:9090/api/v1/query?query=${metric}" 2>/dev/null \
-        | python3 -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    print(data['data']['result'][0]['value'][1])
-except:
-    print('0')
-" 2>/dev/null || echo "0"
+get_proxy_port() {
+    if [ -f "$PROXY_ENV" ]; then
+        grep '^PROXY_PORT=' "$PROXY_ENV" 2>/dev/null | cut -d= -f2 || echo "443"
+    else
+        echo "443"
+    fi
 }
 
 # --- Обработчики команд ---
@@ -122,13 +129,16 @@ cmd_status() {
     local proxy_status=$(check_container "mtproto-proxy")
     local prometheus_status=$(check_container "prometheus")
     local grafana_status=$(check_container "grafana")
+    local exporter_status=$(check_container "node-exporter")
 
     local proxy_icon="🔴"
     local prom_icon="🔴"
     local graf_icon="🔴"
+    local exp_icon="🔴"
     [ "$proxy_status" = "up" ] && proxy_icon="🟢"
     [ "$prometheus_status" = "up" ] && prom_icon="🟢"
     [ "$grafana_status" = "up" ] && graf_icon="🟢"
+    [ "$exporter_status" = "up" ] && exp_icon="🟢"
 
     local proxy_uptime=$(get_container_uptime "mtproto-proxy")
     local cpu=$(get_cpu_usage)
@@ -143,6 +153,7 @@ cmd_status() {
 ${proxy_icon} MTProto Proxy: \`${proxy_status}\`
 ${prom_icon} Prometheus: \`${prometheus_status}\`
 ${graf_icon} Grafana: \`${grafana_status}\`
+${exp_icon} Node Exporter: \`${exporter_status}\`
 
 ⏱ Uptime прокси: \`${proxy_uptime}\`
 
@@ -214,35 +225,41 @@ ${logs}
 cmd_traffic() {
     local chat_id="$1"
 
+    # Получаем статистику из docker stats
     local stats
-    stats=$(get_traffic_stats)
+    stats=$(docker stats --no-stream --format "{{.CPUPerc}}|{{.MemUsage}}|{{.NetIO}}" mtproto-proxy 2>/dev/null || echo "")
 
-    if [ "$stats" = "unavailable" ]; then
-        send_message "$chat_id" "Статистика недоступна. Prometheus не отвечает."
+    if [ -z "$stats" ]; then
+        send_message "$chat_id" "⚠️ Статистика недоступна. Контейнер прокси не запущен."
         return
     fi
 
-    local connections=$(query_prometheus "mtg_client_connections")
-    local bytes_read=$(query_prometheus "mtg_client_bytes_read")
-    local bytes_written=$(query_prometheus "mtg_client_bytes_written")
-    local telegram_conns=$(query_prometheus "mtg_telegram_connections")
-    local replay_attacks=$(query_prometheus "mtg_replay_attacks")
+    local cpu_perc mem_usage net_io
+    cpu_perc=$(echo "$stats" | cut -d'|' -f1)
+    mem_usage=$(echo "$stats" | cut -d'|' -f2)
+    net_io=$(echo "$stats" | cut -d'|' -f3)
 
-    # Конвертация в читаемый формат
-    local read_mb=$(echo "scale=2; ${bytes_read:-0} / 1048576" | bc 2>/dev/null || echo "0")
-    local written_mb=$(echo "scale=2; ${bytes_written:-0} / 1048576" | bc 2>/dev/null || echo "0")
-    local total_mb=$(echo "scale=2; (${bytes_read:-0} + ${bytes_written:-0}) / 1048576" | bc 2>/dev/null || echo "0")
+    local net_in net_out
+    net_in=$(echo "$net_io" | cut -d'/' -f1 | xargs)
+    net_out=$(echo "$net_io" | cut -d'/' -f2 | xargs)
 
-    send_message "$chat_id" "*Статистика трафика*
+    # Системная статистика
+    local sys_cpu=$(get_cpu_usage)
+    local sys_ram=$(get_ram_usage)
+    local sys_disk=$(get_disk_usage)
 
-Активных соединений: \`${connections}\`
-Соединений с Telegram DC: \`${telegram_conns}\`
+    send_message "$chat_id" "*📈 Статистика*
 
-Получено: \`${read_mb} MB\`
-Отправлено: \`${written_mb} MB\`
-Всего: \`${total_mb} MB\`
+*Прокси-контейнер:*
+CPU: \`${cpu_perc}\`
+RAM: \`${mem_usage}\`
+Трафик вход: \`${net_in}\`
+Трафик выход: \`${net_out}\`
 
-Replay-атаки: \`${replay_attacks}\`"
+*Сервер:*
+CPU: \`${sys_cpu}%\`
+RAM: \`${sys_ram}%\`
+Disk: \`${sys_disk}%\`"
 }
 
 cmd_ip() {
@@ -251,7 +268,19 @@ cmd_ip() {
     local server_ip
     server_ip=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || echo "N/A")
 
-    local proxy_link="tg://proxy?server=proxy.websansay.ru&port=443&secret=ee39083ddff7af211d07da62361e39dfb0676f6f676c652e636f6d"
+    local proxy_port=$(get_proxy_port)
+    local fake_tls_secret=$(get_proxy_link)
+
+    local proxy_link
+    if [ -n "$fake_tls_secret" ]; then
+        proxy_link="tg://proxy?server=${server_ip}&port=${proxy_port}&secret=${fake_tls_secret}"
+    else
+        local plain_secret=""
+        if [ -f "$PROXY_ENV" ]; then
+            plain_secret=$(grep '^PROXY_SECRET=' "$PROXY_ENV" 2>/dev/null | cut -d= -f2 || echo "")
+        fi
+        proxy_link="tg://proxy?server=${server_ip}&port=${proxy_port}&secret=${plain_secret}"
+    fi
 
     curl -s -X POST "${API_URL}/sendMessage" \
         -d "chat_id=${chat_id}" \

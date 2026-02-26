@@ -1,26 +1,46 @@
 # =============================================================================
 # MTProto Proxy + Prometheus + Grafana — Полный стек с дашбордом
 # =============================================================================
+# Использует официальный образ от Telegram (telegrammessenger/proxy)
+# с поддержкой TAG (промо-канал) и Fake-TLS маскировки.
+#
 # Использование:
-#   1. Отредактируйте .env файл (SECRET, домен, порт)
+#   1. Отредактируйте .env файл (SECRET, TAG, домен, порт)
 #   2. docker compose up -d
-#   3. Откройте Grafana: http://ВАШ_IP:3000 (admin / admin)
+#   3. Откройте Grafana: http://ВАШ_IP:3000
 # =============================================================================
 
 services:
 
-  # --- MTProto Proxy (mtg) ---
+  # --- MTProto Proxy (официальный от Telegram) ---
   mtproto-proxy:
-    image: nineseconds/mtg:2
+    image: telegrammessenger/proxy:latest
     container_name: mtproto-proxy
     restart: always
     ports:
-      - "${PROXY_PORT:-443}:3128"
+      - "${PROXY_PORT:-443}:443"
     environment:
-      - MTG_DEBUG=${MTG_DEBUG:-false}
+      - SECRET=${PROXY_SECRET}
+      - TAG=${PROXY_TAG:-}
+    networks:
+      - monitoring
+
+  # --- Node Exporter (метрики сервера для Prometheus) ---
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: always
+    ports:
+      - "127.0.0.1:9100:9100"
     volumes:
-      - ./mtg-config.toml:/config.toml:ro
-    command: run /config.toml
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
     networks:
       - monitoring
 
@@ -30,7 +50,7 @@ services:
     container_name: prometheus
     restart: always
     ports:
-      - "127.0.0.1:9090:9090"  # Доступен только с самого сервера
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -38,6 +58,8 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
+    depends_on:
+      - node-exporter
     networks:
       - monitoring
 
@@ -53,7 +75,6 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SERVER_ROOT_URL=http://localhost:3000
-      - GF_INSTALL_PLUGINS=
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
