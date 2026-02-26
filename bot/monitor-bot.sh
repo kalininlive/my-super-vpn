@@ -91,13 +91,27 @@ get_disk_usage() {
 }
 
 get_traffic_stats() {
+    # Запрашиваем метрики через Prometheus API (доступен на localhost:9090)
     local stats
-    stats=$(curl -s "http://localhost:3129/" 2>/dev/null || echo "")
-    if [ -n "$stats" ]; then
-        echo "$stats"
+    stats=$(curl -s "http://localhost:9090/api/v1/query?query=mtg_client_connections" 2>/dev/null || echo "")
+    if echo "$stats" | grep -q '"status":"success"'; then
+        echo "available"
     else
         echo "unavailable"
     fi
+}
+
+query_prometheus() {
+    local metric="$1"
+    curl -s "http://localhost:9090/api/v1/query?query=${metric}" 2>/dev/null \
+        | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    print(data['data']['result'][0]['value'][1])
+except:
+    print('0')
+" 2>/dev/null || echo "0"
 }
 
 # --- Обработчики команд ---
@@ -204,33 +218,31 @@ cmd_traffic() {
     stats=$(get_traffic_stats)
 
     if [ "$stats" = "unavailable" ]; then
-        send_message "$chat_id" "❌ Статистика недоступна. Prometheus не отвечает."
+        send_message "$chat_id" "Статистика недоступна. Prometheus не отвечает."
         return
     fi
 
-    local connections
-    connections=$(echo "$stats" | grep "mtg_client_connections " | awk '{print $2}' || echo "0")
-
-    local bytes_read
-    bytes_read=$(echo "$stats" | grep "mtg_client_bytes_read " | awk '{print $2}' || echo "0")
-
-    local bytes_written
-    bytes_written=$(echo "$stats" | grep "mtg_client_bytes_written " | awk '{print $2}' || echo "0")
+    local connections=$(query_prometheus "mtg_client_connections")
+    local bytes_read=$(query_prometheus "mtg_client_bytes_read")
+    local bytes_written=$(query_prometheus "mtg_client_bytes_written")
+    local telegram_conns=$(query_prometheus "mtg_telegram_connections")
+    local replay_attacks=$(query_prometheus "mtg_replay_attacks")
 
     # Конвертация в читаемый формат
     local read_mb=$(echo "scale=2; ${bytes_read:-0} / 1048576" | bc 2>/dev/null || echo "0")
     local written_mb=$(echo "scale=2; ${bytes_written:-0} / 1048576" | bc 2>/dev/null || echo "0")
     local total_mb=$(echo "scale=2; (${bytes_read:-0} + ${bytes_written:-0}) / 1048576" | bc 2>/dev/null || echo "0")
 
-    local msg="*📈 Статистика трафика*
+    send_message "$chat_id" "*Статистика трафика*
 
-👥 Активных соединений: \`${connections:-0}\`
+Активных соединений: \`${connections}\`
+Соединений с Telegram DC: \`${telegram_conns}\`
 
-📥 Получено: \`${read_mb} MB\`
-📤 Отправлено: \`${written_mb} MB\`
-📊 Всего: \`${total_mb} MB\`"
+Получено: \`${read_mb} MB\`
+Отправлено: \`${written_mb} MB\`
+Всего: \`${total_mb} MB\`
 
-    send_message "$chat_id" "$msg"
+Replay-атаки: \`${replay_attacks}\`"
 }
 
 cmd_ip() {
@@ -239,10 +251,15 @@ cmd_ip() {
     local server_ip
     server_ip=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || echo "N/A")
 
-    send_message "$chat_id" "🌐 IP сервера: \`${server_ip}\`
+    local proxy_link="tg://proxy?server=proxy.websansay.ru&port=443&secret=ee39083ddff7af211d07da62361e39dfb0676f6f676c652e636f6d"
 
-🔗 Ссылка прокси:
-\`tg://proxy?server=proxy.websansay.ru&port=443&secret=ee39083ddff7af211d07da62361e39dfb0676f6f676c652e636f6d\`"
+    curl -s -X POST "${API_URL}/sendMessage" \
+        -d "chat_id=${chat_id}" \
+        -d "text=IP сервера: ${server_ip}
+
+Ссылка прокси:
+${proxy_link}" \
+        > /dev/null 2>&1
 }
 
 cmd_help() {
