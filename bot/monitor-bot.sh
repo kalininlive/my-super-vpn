@@ -111,6 +111,20 @@ get_disk_usage() {
     df / | tail -1 | awk '{print $5}' | tr -d '%' 2>/dev/null || echo "0"
 }
 
+get_server_ip() {
+    local ip=""
+    # Пробуем несколько сервисов определения IP
+    for svc in "ifconfig.me" "icanhazip.com" "ipinfo.io/ip" "api.ipify.org" "ifconfig.co"; do
+        ip=$(curl -s --max-time 3 "$svc" 2>/dev/null | tr -d '[:space:]')
+        # Проверяем что результат — валидный IPv4
+        if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "$ip"
+            return
+        fi
+    done
+    echo "N/A"
+}
+
 # --- Чтение конфигурации прокси ---
 get_proxy_link() {
     if [ -f "$PROXY_ENV" ]; then
@@ -163,7 +177,7 @@ cmd_status() {
     local disk=$(get_disk_usage)
 
     local server_ip
-    server_ip=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || echo "N/A")
+    server_ip=$(get_server_ip)
 
     local msg="*📊 Статус сервера*
 
@@ -283,7 +297,7 @@ cmd_ip() {
     local chat_id="$1"
 
     local server_ip
-    server_ip=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || echo "N/A")
+    server_ip=$(get_server_ip)
 
     local proxy_port=$(get_proxy_port)
     local fake_tls_secret=$(get_proxy_link)
@@ -377,7 +391,7 @@ cmd_qr() {
     fi
 
     local server_ip
-    server_ip=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || echo "N/A")
+    server_ip=$(get_server_ip)
 
     local proxy_port=$(get_proxy_port)
     local plain_secret=""
@@ -412,7 +426,7 @@ cmd_servers() {
 "
     # Локальный сервер
     local local_ip
-    local_ip=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || echo "N/A")
+    local_ip=$(get_server_ip)
     local local_port=$(get_proxy_port)
     local local_status=$(check_container "mtproto-proxy")
 
