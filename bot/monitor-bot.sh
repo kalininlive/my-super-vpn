@@ -9,6 +9,7 @@
 #   /logs     — последние логи
 #   /traffic  — статистика трафика
 #   /ip       — показать IP сервера
+#   /ping     — проверка доступности прокси
 #   /help     — список команд
 #
 # Автоматические уведомления:
@@ -291,6 +292,65 @@ ${proxy_link}" \
         > /dev/null 2>&1
 }
 
+cmd_ping() {
+    local chat_id="$1"
+
+    local proxy_status=$(check_container "mtproto-proxy")
+    if [ "$proxy_status" != "up" ]; then
+        send_message "$chat_id" "🔴 *Прокси не запущен!*"
+        return
+    fi
+
+    local proxy_port=$(get_proxy_port)
+
+    # Измеряем TCP-соединение к прокси
+    local start_time end_time latency
+    start_time=$(date +%s%N)
+    if timeout 3 bash -c "echo > /dev/tcp/127.0.0.1/${proxy_port}" 2>/dev/null; then
+        end_time=$(date +%s%N)
+        latency=$(( (end_time - start_time) / 1000000 ))
+        local port_status="🟢 Порт ${proxy_port}: открыт (${latency} ms)"
+    else
+        local port_status="🔴 Порт ${proxy_port}: не отвечает"
+    fi
+
+    # Проверяем DNS домена
+    local dns_status=""
+    if [ -f "$PROXY_ENV" ]; then
+        local domain
+        domain=$(grep '^PROXY_DOMAIN=' "$PROXY_ENV" 2>/dev/null | cut -d= -f2 || echo "")
+        if [ -n "$domain" ]; then
+            local resolved
+            resolved=$(dig +short "$domain" 2>/dev/null | head -1)
+            if [ -n "$resolved" ]; then
+                dns_status="
+🟢 DNS ${domain}: \`${resolved}\`"
+            else
+                dns_status="
+🔴 DNS ${domain}: не резолвится"
+            fi
+        fi
+    fi
+
+    # Проверяем доступность Telegram API
+    local tg_start tg_end tg_latency tg_status
+    tg_start=$(date +%s%N)
+    if curl -s --max-time 3 -o /dev/null https://core.telegram.org 2>/dev/null; then
+        tg_end=$(date +%s%N)
+        tg_latency=$(( (tg_end - tg_start) / 1000000 ))
+        tg_status="🟢 Telegram API: доступен (${tg_latency} ms)"
+    else
+        tg_status="🔴 Telegram API: недоступен"
+    fi
+
+    send_message "$chat_id" "*🏓 Ping*
+
+${port_status}
+${tg_status}${dns_status}
+
+Контейнер: \`$(get_container_uptime "mtproto-proxy")\`"
+}
+
 cmd_help() {
     local chat_id="$1"
 
@@ -302,6 +362,7 @@ cmd_help() {
 /logs — Последние логи прокси
 /traffic — Статистика трафика
 /ip — IP и ссылка прокси
+/ping — Проверка доступности прокси
 /help — Эта справка
 
 *Автоматические уведомления:*
@@ -355,6 +416,7 @@ except:
             /logs)       cmd_logs "$chat_id" ;;
             /traffic)    cmd_traffic "$chat_id" ;;
             /ip)         cmd_ip "$chat_id" ;;
+            /ping)       cmd_ping "$chat_id" ;;
             /help|/start) cmd_help "$chat_id" ;;
             *)           send_message "$chat_id" "Неизвестная команда. /help" ;;
         esac
