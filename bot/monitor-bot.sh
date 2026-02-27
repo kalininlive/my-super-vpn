@@ -10,6 +10,8 @@
 #   /traffic  — статистика трафика
 #   /ip       — показать IP сервера
 #   /ping     — проверка доступности прокси
+#   /qr       — QR-код со ссылкой прокси
+#   /servers  — статус всех серверов (мульти-сервер)
 #   /help     — список команд
 #
 # Автоматические уведомления:
@@ -24,6 +26,7 @@ set -euo pipefail
 BOT_TOKEN="${BOT_TOKEN:-}"
 ADMIN_CHAT_ID="${ADMIN_CHAT_ID:-}"
 CHECK_INTERVAL="${CHECK_INTERVAL:-30}"  # Секунды между проверками
+EXTRA_SERVERS="${EXTRA_SERVERS:-}"      # Доп. серверы: "Имя1:ip1:port1,Имя2:ip2:port2"
 
 # --- Файл конфигурации прокси ---
 PROXY_ENV="/opt/mtproto-dashboard/.env"
@@ -56,6 +59,19 @@ send_message() {
         -d "text=${text}" \
         -d "parse_mode=${parse_mode}" \
         -d "disable_web_page_preview=true" \
+        > /dev/null 2>&1
+}
+
+send_photo() {
+    local chat_id="$1"
+    local photo_path="$2"
+    local caption="${3:-}"
+
+    curl -s -X POST "${API_URL}/sendPhoto" \
+        -F "chat_id=${chat_id}" \
+        -F "photo=@${photo_path}" \
+        -F "caption=${caption}" \
+        -F "parse_mode=Markdown" \
         > /dev/null 2>&1
 }
 
@@ -351,6 +367,102 @@ ${tg_status}${dns_status}
 Контейнер: \`$(get_container_uptime "mtproto-proxy")\`"
 }
 
+cmd_qr() {
+    local chat_id="$1"
+
+    # Проверяем qrencode
+    if ! command -v qrencode &> /dev/null; then
+        send_message "$chat_id" "⚠️ \`qrencode\` не установлен. Выполните: \`apt install qrencode\`"
+        return
+    fi
+
+    local server_ip
+    server_ip=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || echo "N/A")
+
+    local proxy_port=$(get_proxy_port)
+    local plain_secret=""
+    if [ -f "$PROXY_ENV" ]; then
+        plain_secret=$(grep '^PROXY_SECRET=' "$PROXY_ENV" 2>/dev/null | cut -d= -f2 || echo "")
+    fi
+
+    if [ -z "$plain_secret" ]; then
+        send_message "$chat_id" "⚠️ SECRET не найден в конфигурации."
+        return
+    fi
+
+    local proxy_link="tg://proxy?server=${server_ip}&port=${proxy_port}&secret=${plain_secret}"
+    local qr_file="/tmp/proxy-qr-$$.png"
+
+    # Генерируем QR-код
+    qrencode -o "$qr_file" -s 10 -l H -m 2 "$proxy_link" 2>/dev/null
+
+    if [ -f "$qr_file" ]; then
+        send_photo "$chat_id" "$qr_file" "📱 *QR-код прокси*
+Отсканируйте камерой Telegram"
+        rm -f "$qr_file"
+    else
+        send_message "$chat_id" "❌ Ошибка генерации QR-кода."
+    fi
+}
+
+cmd_servers() {
+    local chat_id="$1"
+
+    local msg="*🖥 Статус серверов*
+"
+    # Локальный сервер
+    local local_ip
+    local_ip=$(curl -s --max-time 3 ifconfig.me 2>/dev/null || echo "N/A")
+    local local_port=$(get_proxy_port)
+    local local_status=$(check_container "mtproto-proxy")
+
+    local local_icon="🔴"
+    local local_latency=""
+    if [ "$local_status" = "up" ]; then
+        local_icon="🟢"
+        local start_time end_time
+        start_time=$(date +%s%N)
+        if timeout 3 bash -c "echo > /dev/tcp/127.0.0.1/${local_port}" 2>/dev/null; then
+            end_time=$(date +%s%N)
+            local_latency=" ($(( (end_time - start_time) / 1000000 )) ms)"
+        fi
+    fi
+
+    msg="${msg}
+${local_icon} *Main* — \`${local_ip}:${local_port}\`${local_latency}"
+
+    # Дополнительные серверы
+    if [ -n "$EXTRA_SERVERS" ]; then
+        IFS=',' read -ra SERVERS <<< "$EXTRA_SERVERS"
+        for server_entry in "${SERVERS[@]}"; do
+            local srv_name srv_ip srv_port
+            IFS=':' read -r srv_name srv_ip srv_port <<< "$server_entry"
+            srv_port=${srv_port:-443}
+
+            local srv_icon="🔴"
+            local srv_latency=""
+
+            local start_time end_time
+            start_time=$(date +%s%N)
+            if timeout 3 bash -c "echo > /dev/tcp/${srv_ip}/${srv_port}" 2>/dev/null; then
+                end_time=$(date +%s%N)
+                srv_latency=" ($(( (end_time - start_time) / 1000000 )) ms)"
+                srv_icon="🟢"
+            fi
+
+            msg="${msg}
+${srv_icon} *${srv_name}* — \`${srv_ip}:${srv_port}\`${srv_latency}"
+        done
+    else
+        msg="${msg}
+
+_Доп. серверы не настроены._
+_Добавьте EXTRA\\_SERVERS в .env бота._"
+    fi
+
+    send_message "$chat_id" "$msg"
+}
+
 cmd_help() {
     local chat_id="$1"
 
@@ -363,6 +475,8 @@ cmd_help() {
 /traffic — Статистика трафика
 /ip — IP и ссылка прокси
 /ping — Проверка доступности прокси
+/qr — QR-код со ссылкой прокси
+/servers — Статус всех серверов
 /help — Эта справка
 
 *Автоматические уведомления:*
@@ -417,6 +531,8 @@ except:
             /traffic)    cmd_traffic "$chat_id" ;;
             /ip)         cmd_ip "$chat_id" ;;
             /ping)       cmd_ping "$chat_id" ;;
+            /qr)         cmd_qr "$chat_id" ;;
+            /servers)    cmd_servers "$chat_id" ;;
             /help|/start) cmd_help "$chat_id" ;;
             *)           send_message "$chat_id" "Неизвестная команда. /help" ;;
         esac
@@ -426,13 +542,14 @@ except:
 # --- Автоматический мониторинг ---
 
 PREV_PROXY_STATE="unknown"
+declare -A PREV_SERVER_STATES
 
 auto_monitor() {
     local proxy_status=$(check_container "mtproto-proxy")
     local cpu=$(get_cpu_usage)
     local ram=$(get_ram_usage)
 
-    # Проверка состояния прокси
+    # Проверка состояния локального прокси
     if [ "$proxy_status" = "down" ] && [ "$PREV_PROXY_STATE" != "down" ]; then
         send_message "$ADMIN_CHAT_ID" "🚨 *ВНИМАНИЕ: MTProto Proxy упал!*
 
@@ -447,6 +564,33 @@ auto_monitor() {
         PREV_PROXY_STATE="up"
     else
         PREV_PROXY_STATE="$proxy_status"
+    fi
+
+    # Проверка дополнительных серверов
+    if [ -n "$EXTRA_SERVERS" ]; then
+        IFS=',' read -ra SERVERS <<< "$EXTRA_SERVERS"
+        for server_entry in "${SERVERS[@]}"; do
+            local srv_name srv_ip srv_port
+            IFS=':' read -r srv_name srv_ip srv_port <<< "$server_entry"
+            srv_port=${srv_port:-443}
+
+            local srv_status="down"
+            if timeout 3 bash -c "echo > /dev/tcp/${srv_ip}/${srv_port}" 2>/dev/null; then
+                srv_status="up"
+            fi
+
+            local prev_state="${PREV_SERVER_STATES[$srv_name]:-unknown}"
+
+            if [ "$srv_status" = "down" ] && [ "$prev_state" != "down" ]; then
+                send_message "$ADMIN_CHAT_ID" "🚨 *Сервер ${srv_name} (${srv_ip}:${srv_port}) недоступен!*"
+                PREV_SERVER_STATES[$srv_name]="down"
+            elif [ "$srv_status" = "up" ] && [ "$prev_state" = "down" ]; then
+                send_message "$ADMIN_CHAT_ID" "✅ *Сервер ${srv_name} (${srv_ip}:${srv_port}) снова доступен!*"
+                PREV_SERVER_STATES[$srv_name]="up"
+            else
+                PREV_SERVER_STATES[$srv_name]="$srv_status"
+            fi
+        done
     fi
 
     # Проверка нагрузки

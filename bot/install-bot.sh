@@ -77,6 +77,23 @@ echo ""
 read -p "Интервал проверки в секундах [30]: " CHECK_INTERVAL
 CHECK_INTERVAL=${CHECK_INTERVAL:-30}
 
+# --- Доп. серверы ---
+echo ""
+echo -e "${CYAN}Шаг 4: Мониторинг дополнительных серверов (опционально)${NC}"
+echo ""
+echo "Если у вас несколько серверов прокси, бот будет следить за ними."
+echo "Формат: Имя:IP:Порт (через запятую для нескольких)"
+echo "Пример: Backup:1.2.3.4:443,EU:5.6.7.8:443"
+echo ""
+
+read -p "Доп. серверы (Enter чтобы пропустить): " EXTRA_SERVERS
+EXTRA_SERVERS=${EXTRA_SERVERS:-}
+
+# --- Установка зависимостей ---
+echo ""
+echo "Установка зависимостей..."
+apt-get install -y qrencode > /dev/null 2>&1 || echo -e "${YELLOW}qrencode не установлен — /qr будет недоступен${NC}"
+
 # --- Установка ---
 echo ""
 echo "Установка бота..."
@@ -93,6 +110,7 @@ cat > "$BOT_DIR/.env" << EOF
 BOT_TOKEN=${BOT_TOKEN}
 ADMIN_CHAT_ID=${ADMIN_CHAT_ID}
 CHECK_INTERVAL=${CHECK_INTERVAL}
+EXTRA_SERVERS=${EXTRA_SERVERS}
 EOF
 chmod 600 "$BOT_DIR/.env"
 
