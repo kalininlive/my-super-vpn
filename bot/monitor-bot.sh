@@ -158,18 +158,8 @@ cmd_status() {
     local chat_id="$1"
 
     local proxy_status=$(check_container "mtproto-proxy")
-    local prometheus_status=$(check_container "prometheus")
-    local grafana_status=$(check_container "grafana")
-    local exporter_status=$(check_container "node-exporter")
-
     local proxy_icon="🔴"
-    local prom_icon="🔴"
-    local graf_icon="🔴"
-    local exp_icon="🔴"
     [ "$proxy_status" = "up" ] && proxy_icon="🟢"
-    [ "$prometheus_status" = "up" ] && prom_icon="🟢"
-    [ "$grafana_status" = "up" ] && graf_icon="🟢"
-    [ "$exporter_status" = "up" ] && exp_icon="🟢"
 
     local proxy_uptime=$(get_container_uptime "mtproto-proxy")
     local cpu=$(get_cpu_usage)
@@ -182,11 +172,7 @@ cmd_status() {
     local msg="*📊 Статус сервера*
 
 ${proxy_icon} MTProto Proxy: \`${proxy_status}\`
-${prom_icon} Prometheus: \`${prometheus_status}\`
-${graf_icon} Grafana: \`${grafana_status}\`
-${exp_icon} Node Exporter: \`${exporter_status}\`
-
-⏱ Uptime прокси: \`${proxy_uptime}\`
+⏱ Uptime: \`${proxy_uptime}\`
 
 💻 *Ресурсы:*
 CPU: \`${cpu}%\`

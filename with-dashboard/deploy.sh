@@ -1,8 +1,8 @@
 #!/bin/bash
 # =============================================================================
-# deploy.sh — Развертывание MTProto Proxy + Grafana Dashboard
+# deploy.sh — Развертывание MTProto Proxy
 # Использует официальный образ от Telegram (telegrammessenger/proxy)
-# с поддержкой TAG (промо-канал) и Fake-TLS маскировки.
+# с поддержкой TAG (промо-канал).
 # Запускать от root на сервере, ПОСЛЕ выполнения setup-vps.sh
 # =============================================================================
 
@@ -17,7 +17,7 @@ NC='\033[0m'
 WORK_DIR="/opt/mtproto-dashboard"
 
 echo "============================================"
-echo "  MTProto Proxy + Dashboard"
+echo "  MTProto Proxy"
 echo "============================================"
 echo ""
 
@@ -33,7 +33,7 @@ if ! docker compose version &> /dev/null 2>&1; then
 fi
 
 # --- Сбор конфигурации ---
-echo -e "${CYAN}Шаг 1: Конфигурация MTProto Proxy${NC}"
+echo -e "${CYAN}Конфигурация MTProto Proxy${NC}"
 echo ""
 echo "Перед продолжением зарегистрируйте прокси в @MTProxybot в Telegram."
 echo ""
@@ -59,32 +59,6 @@ fi
 read -p "Порт прокси [443]: " PROXY_PORT
 PROXY_PORT=${PROXY_PORT:-443}
 
-read -p "Домен для Fake-TLS маскировки [google.com]: " FAKE_TLS_DOMAIN
-FAKE_TLS_DOMAIN=${FAKE_TLS_DOMAIN:-google.com}
-
-echo ""
-echo -e "${CYAN}Шаг 2: Конфигурация Grafana (личный кабинет)${NC}"
-echo ""
-
-read -p "Порт Grafana [3000]: " GRAFANA_PORT
-GRAFANA_PORT=${GRAFANA_PORT:-3000}
-
-read -p "Логин Grafana [admin]: " GRAFANA_USER
-GRAFANA_USER=${GRAFANA_USER:-admin}
-
-read -sp "Пароль Grafana [admin]: " GRAFANA_PASSWORD
-GRAFANA_PASSWORD=${GRAFANA_PASSWORD:-admin}
-echo ""
-
-# --- Генерация Fake-TLS секрета для ссылки ---
-echo ""
-echo "Генерация Fake-TLS секрета для ссылки..."
-
-DOMAIN_HEX=$(echo -n "$FAKE_TLS_DOMAIN" | xxd -p | tr -d '\n')
-FAKE_TLS_SECRET="ee${PROXY_SECRET}${DOMAIN_HEX}"
-
-echo -e "${GREEN}Fake-TLS секрет: ${FAKE_TLS_SECRET}${NC}"
-
 # --- Создание рабочей директории ---
 echo ""
 echo "Создание рабочей директории: $WORK_DIR"
@@ -103,11 +77,6 @@ cat > "$WORK_DIR/.env" << EOF
 PROXY_SECRET=${PROXY_SECRET}
 PROXY_TAG=${PROXY_TAG}
 PROXY_PORT=${PROXY_PORT}
-FAKE_TLS_DOMAIN=${FAKE_TLS_DOMAIN}
-FAKE_TLS_SECRET=${FAKE_TLS_SECRET}
-GRAFANA_PORT=${GRAFANA_PORT}
-GRAFANA_USER=${GRAFANA_USER}
-GRAFANA_PASSWORD=${GRAFANA_PASSWORD}
 EOF
 chmod 600 "$WORK_DIR/.env"
 
@@ -115,85 +84,56 @@ chmod 600 "$WORK_DIR/.env"
 echo ""
 echo "Настройка фаервола..."
 ufw allow "${PROXY_PORT}/tcp" comment 'MTProto Proxy' 2>/dev/null || true
-ufw allow "${GRAFANA_PORT}/tcp" comment 'Grafana Dashboard' 2>/dev/null || true
 ufw reload 2>/dev/null || true
 
 # --- Запуск ---
 echo ""
-echo "Запуск контейнеров..."
+echo "Запуск контейнера..."
 docker compose down 2>/dev/null || true
 docker compose pull
 docker compose up -d
 
 # --- Ждем запуска ---
 echo ""
-echo "Ожидание запуска сервисов..."
-sleep 10
+echo "Ожидание запуска..."
+sleep 5
 
 # --- Проверка ---
-ALL_OK=true
-
 echo ""
-echo "Проверка сервисов:"
+echo "Проверка сервиса:"
 
 if docker ps --format '{{.Names}}' | grep -q "mtproto-proxy"; then
     echo -e "  MTProto Proxy: ${GREEN}Работает${NC}"
 else
     echo -e "  MTProto Proxy: ${RED}Не запущен!${NC}"
-    ALL_OK=false
+    echo -e "  Проверьте логи: docker compose logs"
+    exit 1
 fi
 
-if docker ps --format '{{.Names}}' | grep -q "node-exporter"; then
-    echo -e "  Node Exporter: ${GREEN}Работает${NC}"
-else
-    echo -e "  Node Exporter: ${RED}Не запущен!${NC}"
-    ALL_OK=false
-fi
-
-if docker ps --format '{{.Names}}' | grep -q "prometheus"; then
-    echo -e "  Prometheus:    ${GREEN}Работает${NC}"
-else
-    echo -e "  Prometheus:    ${RED}Не запущен!${NC}"
-    ALL_OK=false
-fi
-
-if docker ps --format '{{.Names}}' | grep -q "grafana"; then
-    echo -e "  Grafana:       ${GREEN}Работает${NC}"
-else
-    echo -e "  Grafana:       ${RED}Не запущен!${NC}"
-    ALL_OK=false
-fi
+# --- Определение IP ---
+SERVER_IP=""
+for svc in ifconfig.me icanhazip.com ipinfo.io/ip api.ipify.org ifconfig.co; do
+    SERVER_IP=$(curl -s --max-time 3 "$svc" 2>/dev/null | tr -d '[:space:]')
+    if [[ "$SERVER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        break
+    fi
+    SERVER_IP=""
+done
+SERVER_IP=${SERVER_IP:-ВАШ_IP}
 
 # --- Вывод результатов ---
-SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || echo "ВАШ_IP")
+echo ""
+echo -e "${GREEN}============================================${NC}"
+echo -e "${GREEN}  MTProto Proxy успешно запущен!${NC}"
+echo -e "${GREEN}============================================${NC}"
 
 echo ""
-if [ "$ALL_OK" = true ]; then
-    echo -e "${GREEN}============================================${NC}"
-    echo -e "${GREEN}  Все сервисы успешно запущены!${NC}"
-    echo -e "${GREEN}============================================${NC}"
-else
-    echo -e "${YELLOW}============================================${NC}"
-    echo -e "${YELLOW}  Некоторые сервисы не запустились.${NC}"
-    echo -e "${YELLOW}  Проверьте логи: docker compose logs${NC}"
-    echo -e "${YELLOW}============================================${NC}"
-fi
-
+echo -e "${CYAN}=== ССЫЛКА ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ===${NC}"
 echo ""
-echo -e "${CYAN}=== ЛИЧНЫЙ КАБИНЕТ (Grafana) ===${NC}"
-echo ""
-echo "  URL:    http://${SERVER_IP}:${GRAFANA_PORT}"
-echo "  Логин:  ${GRAFANA_USER}"
-echo "  Пароль: ${GRAFANA_PASSWORD}"
-echo ""
-
-echo -e "${CYAN}=== ССЫЛКИ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ===${NC}"
-echo ""
-echo "  Ссылка с Fake-TLS (рекомендуется):"
-echo "  tg://proxy?server=${SERVER_IP}&port=${PROXY_PORT}&secret=${FAKE_TLS_SECRET}"
+echo "  tg://proxy?server=${SERVER_IP}&port=${PROXY_PORT}&secret=${PROXY_SECRET}"
 echo ""
 echo "  Веб-ссылка:"
-echo "  https://t.me/proxy?server=${SERVER_IP}&port=${PROXY_PORT}&secret=${FAKE_TLS_SECRET}"
+echo "  https://t.me/proxy?server=${SERVER_IP}&port=${PROXY_PORT}&secret=${PROXY_SECRET}"
 echo ""
 
 if [ -n "$PROXY_TAG" ]; then
@@ -206,8 +146,7 @@ echo ""
 echo -e "${CYAN}=== УПРАВЛЕНИЕ ===${NC}"
 echo ""
 echo "  cd $WORK_DIR"
-echo "  docker compose logs -f             # Логи всех сервисов"
-echo "  docker compose logs mtproto-proxy  # Логи прокси"
+echo "  docker compose logs -f             # Логи прокси"
 echo "  docker compose restart             # Перезапуск"
 echo "  docker compose down                # Остановка"
 echo "  docker compose up -d               # Запуск"

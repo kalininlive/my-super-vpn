@@ -1,13 +1,12 @@
 # =============================================================================
-# MTProto Proxy + Prometheus + Grafana — Полный стек с дашбордом
+# MTProto Proxy — Docker Compose
 # =============================================================================
 # Использует официальный образ от Telegram (telegrammessenger/proxy)
-# с поддержкой TAG (промо-канал) и Fake-TLS маскировки.
+# с поддержкой TAG (промо-канал).
 #
 # Использование:
-#   1. Отредактируйте .env файл (SECRET, TAG, домен, порт)
+#   1. Отредактируйте .env файл (SECRET, TAG, порт)
 #   2. docker compose up -d
-#   3. Откройте Grafana: http://ВАШ_IP:3000
 # =============================================================================
 
 services:
@@ -22,72 +21,3 @@ services:
     environment:
       - SECRET=${PROXY_SECRET}
       - TAG=${PROXY_TAG:-}
-    networks:
-      - monitoring
-
-  # --- Node Exporter (метрики сервера для Prometheus) ---
-  node-exporter:
-    image: prom/node-exporter:latest
-    container_name: node-exporter
-    restart: always
-    ports:
-      - "127.0.0.1:9100:9100"
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-      - /:/rootfs:ro
-    command:
-      - '--path.procfs=/host/proc'
-      - '--path.sysfs=/host/sys'
-      - '--path.rootfs=/rootfs'
-      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
-    networks:
-      - monitoring
-
-  # --- Prometheus (сбор метрик) ---
-  prometheus:
-    image: prom/prometheus:latest
-    container_name: prometheus
-    restart: always
-    ports:
-      - "127.0.0.1:9090:9090"
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus_data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.retention.time=30d'
-      - '--web.enable-lifecycle'
-    depends_on:
-      - node-exporter
-    networks:
-      - monitoring
-
-  # --- Grafana (визуализация) ---
-  grafana:
-    image: grafana/grafana:latest
-    container_name: grafana
-    restart: always
-    ports:
-      - "${GRAFANA_PORT:-3000}:3000"
-    environment:
-      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
-      - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_SERVER_ROOT_URL=http://localhost:3000
-    volumes:
-      - grafana_data:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
-    depends_on:
-      - prometheus
-    networks:
-      - monitoring
-
-volumes:
-  prometheus_data:
-  grafana_data:
-
-networks:
-  monitoring:
-    driver: bridge
