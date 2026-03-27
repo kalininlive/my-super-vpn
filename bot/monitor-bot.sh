@@ -27,6 +27,8 @@ BOT_TOKEN="${BOT_TOKEN:-}"
 ADMIN_CHAT_ID="${ADMIN_CHAT_ID:-}"
 CHECK_INTERVAL="${CHECK_INTERVAL:-30}"  # Секунды между проверками
 EXTRA_SERVERS="${EXTRA_SERVERS:-}"      # Доп. серверы: "Имя1:ip1:port1,Имя2:ip2:port2"
+POLAND_IP="${POLAND_IP:-}"             # IP сервера Польша
+POLAND_SSH_KEY="${POLAND_SSH_KEY:-}"   # Путь к SSH-ключу для Польши
 
 # --- Файл конфигурации прокси ---
 PROXY_ENV="/opt/mtproto-dashboard/.env"
@@ -111,6 +113,26 @@ get_disk_usage() {
     df / | tail -1 | awk '{print $5}' | tr -d '%' 2>/dev/null || echo "0"
 }
 
+get_connections() {
+    local container_id
+    container_id=$(docker ps -q --filter name=mtproto 2>/dev/null | head -1)
+    if [ -n "$container_id" ]; then
+        docker exec "$container_id" ss -tn 2>/dev/null | grep -c ESTAB || echo "0"
+    else
+        echo "0"
+    fi
+}
+
+get_remote_connections() {
+    local ip="$1"
+    local key="$2"
+    if [ -z "$ip" ] || [ -z "$key" ]; then echo "N/A"; return; fi
+    ssh -i "$key" -o ConnectTimeout=5 -o StrictHostKeyChecking=no \
+        root@"$ip" \
+        'docker exec $(docker ps -q --filter name=mtproto) ss -tn 2>/dev/null | grep -c ESTAB || echo 0' \
+        2>/dev/null || echo "N/A"
+}
+
 get_server_ip() {
     local ip=""
     # Пробуем несколько сервисов определения IP
@@ -157,29 +179,71 @@ get_proxy_port() {
 cmd_status() {
     local chat_id="$1"
 
-    local proxy_status=$(check_container "mtproto-proxy")
-    local proxy_icon="🔴"
-    [ "$proxy_status" = "up" ] && proxy_icon="🟢"
-
-    local proxy_uptime=$(get_container_uptime "mtproto-proxy")
     local cpu=$(get_cpu_usage)
     local ram=$(get_ram_usage)
     local disk=$(get_disk_usage)
+    local proxy_uptime=$(get_container_uptime "mtproto-proxy")
 
-    local server_ip
-    server_ip=$(get_server_ip)
+    local msg="*📊 Статус серверов*
+"
+    # Локальный сервер
+    local local_ip
+    local_ip=$(get_server_ip)
+    local local_port=$(get_proxy_port)
+    local local_status=$(check_container "mtproto-proxy")
+    local local_conns=$(get_connections)
 
-    local msg="*📊 Статус сервера*
+    local local_icon="🔴"
+    local local_latency=""
+    if [ "$local_status" = "up" ]; then
+        local_icon="🟢"
+        local start_time end_time
+        start_time=$(date +%s%N)
+        if timeout 3 bash -c "echo > /dev/tcp/127.0.0.1/${local_port}" 2>/dev/null; then
+            end_time=$(date +%s%N)
+            local_latency=" ($(( (end_time - start_time) / 1000000 )) ms)"
+        fi
+    fi
 
-${proxy_icon} MTProto Proxy: \`${proxy_status}\`
-⏱ Uptime: \`${proxy_uptime}\`
+    msg="${msg}
+${local_icon} *Main* — \`${local_ip}:${local_port}\`${local_latency} 👥 \`${local_conns}\`"
 
-💻 *Ресурсы:*
+    # Дополнительные серверы
+    if [ -n "$EXTRA_SERVERS" ]; then
+        IFS=',' read -ra SERVERS <<< "$EXTRA_SERVERS"
+        for server_entry in "${SERVERS[@]}"; do
+            local srv_name srv_ip srv_port
+            IFS=':' read -r srv_name srv_ip srv_port <<< "$server_entry"
+            srv_port=${srv_port:-443}
+
+            local srv_icon="🔴"
+            local srv_latency=""
+            local srv_conns="N/A"
+
+            local start_time end_time
+            start_time=$(date +%s%N)
+            if timeout 3 bash -c "echo > /dev/tcp/${srv_ip}/${srv_port}" 2>/dev/null; then
+                end_time=$(date +%s%N)
+                srv_latency=" ($(( (end_time - start_time) / 1000000 )) ms)"
+                srv_icon="🟢"
+            fi
+
+            if [ -n "$POLAND_IP" ] && [ "$srv_ip" = "$POLAND_IP" ] && [ -n "$POLAND_SSH_KEY" ]; then
+                srv_conns=$(get_remote_connections "$srv_ip" "$POLAND_SSH_KEY")
+            fi
+
+            msg="${msg}
+${srv_icon} *${srv_name}* — \`${srv_ip}:${srv_port}\`${srv_latency} 👥 \`${srv_conns}\`"
+        done
+    fi
+
+    msg="${msg}
+
+💻 *Ресурсы (Main):*
 CPU: \`${cpu}%\`
 RAM: \`${ram}%\`
 Disk: \`${disk}%\`
-
-🌐 IP: \`${server_ip}\`"
+⏱ Uptime: \`${proxy_uptime}\`"
 
     send_message "$chat_id" "$msg"
 }
@@ -415,6 +479,7 @@ cmd_servers() {
     local_ip=$(get_server_ip)
     local local_port=$(get_proxy_port)
     local local_status=$(check_container "mtproto-proxy")
+    local local_conns=$(get_connections)
 
     local local_icon="🔴"
     local local_latency=""
@@ -429,7 +494,7 @@ cmd_servers() {
     fi
 
     msg="${msg}
-${local_icon} *Main* — \`${local_ip}:${local_port}\`${local_latency}"
+${local_icon} *Main* — \`${local_ip}:${local_port}\`${local_latency} 👥 \`${local_conns}\`"
 
     # Дополнительные серверы
     if [ -n "$EXTRA_SERVERS" ]; then
@@ -441,6 +506,7 @@ ${local_icon} *Main* — \`${local_ip}:${local_port}\`${local_latency}"
 
             local srv_icon="🔴"
             local srv_latency=""
+            local srv_conns="N/A"
 
             local start_time end_time
             start_time=$(date +%s%N)
@@ -450,8 +516,13 @@ ${local_icon} *Main* — \`${local_ip}:${local_port}\`${local_latency}"
                 srv_icon="🟢"
             fi
 
+            # Получаем подключения для серверов с SSH-ключом
+            if [ -n "$POLAND_IP" ] && [ "$srv_ip" = "$POLAND_IP" ] && [ -n "$POLAND_SSH_KEY" ]; then
+                srv_conns=$(get_remote_connections "$srv_ip" "$POLAND_SSH_KEY")
+            fi
+
             msg="${msg}
-${srv_icon} *${srv_name}* — \`${srv_ip}:${srv_port}\`${srv_latency}"
+${srv_icon} *${srv_name}* — \`${srv_ip}:${srv_port}\`${srv_latency} 👥 \`${srv_conns}\`"
         done
     else
         msg="${msg}
@@ -463,20 +534,102 @@ _Добавьте EXTRA\\_SERVERS в .env бота._"
     send_message "$chat_id" "$msg"
 }
 
+cmd_restart_poland() {
+    local chat_id="$1"
+    if [ -z "$POLAND_IP" ] || [ -z "$POLAND_SSH_KEY" ]; then
+        send_message "$chat_id" "❌ POLAND\\_IP или POLAND\\_SSH\\_KEY не настроены в .env"
+        return
+    fi
+    send_message "$chat_id" "🔄 *Перезапуск прокси на Польше...*"
+    ssh -i "$POLAND_SSH_KEY" -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
+        root@"$POLAND_IP" \
+        "cd /opt/mtproto-dashboard && docker compose restart mtproto-proxy" 2>&1
+    sleep 3
+    if timeout 5 bash -c "echo > /dev/tcp/${POLAND_IP}/443" 2>/dev/null; then
+        send_message "$chat_id" "✅ *Прокси на Польше перезапущен!*"
+    else
+        send_message "$chat_id" "❌ *Польша не отвечает после перезапуска.*"
+    fi
+}
+
+cmd_restartall_poland() {
+    local chat_id="$1"
+    if [ -z "$POLAND_IP" ] || [ -z "$POLAND_SSH_KEY" ]; then
+        send_message "$chat_id" "❌ POLAND\\_IP или POLAND\\_SSH\\_KEY не настроены в .env"
+        return
+    fi
+    send_message "$chat_id" "🔄 *Перезапуск всех сервисов на Польше...*"
+    ssh -i "$POLAND_SSH_KEY" -o ConnectTimeout=10 -o StrictHostKeyChecking=no \
+        root@"$POLAND_IP" \
+        "cd /opt/mtproto-dashboard && docker compose down && docker compose up -d" 2>&1
+    sleep 5
+    if timeout 5 bash -c "echo > /dev/tcp/${POLAND_IP}/443" 2>/dev/null; then
+        send_message "$chat_id" "✅ *Все сервисы на Польше перезапущены!*"
+    else
+        send_message "$chat_id" "❌ *Польша не отвечает после перезапуска.*"
+    fi
+}
+
+cmd_speedtest() {
+    local chat_id="$1"
+
+    send_message "$chat_id" "⏳ *Запускаю speedtest...*
+_Это займёт ~20 секунд_"
+
+    if ! command -v speedtest-cli &>/dev/null && ! command -v speedtest &>/dev/null; then
+        send_message "$chat_id" "❌ speedtest-cli не установлен.
+
+Установи командой:
+\`\`\`
+apt install speedtest-cli
+\`\`\`"
+        return
+    fi
+
+    local result
+    if command -v speedtest-cli &>/dev/null; then
+        result=$(speedtest-cli --simple 2>&1)
+    else
+        result=$(speedtest --simple 2>&1)
+    fi
+
+    if [ $? -ne 0 ] || [ -z "$result" ]; then
+        send_message "$chat_id" "❌ Ошибка при запуске speedtest. Попробуйте позже."
+        return
+    fi
+
+    local ping_val download_val upload_val
+    ping_val=$(echo "$result"     | grep -i "ping"     | awk '{print $2, $3}')
+    download_val=$(echo "$result" | grep -i "download" | awk '{print $2, $3}')
+    upload_val=$(echo "$result"   | grep -i "upload"   | awk '{print $2, $3}')
+
+    local server_ip
+    server_ip=$(get_server_ip)
+
+    send_message "$chat_id" "*📡 Speedtest — \`${server_ip}\`*
+
+🏓 Ping: \`${ping_val}\`
+⬇️ Download: \`${download_val}\`
+⬆️ Upload: \`${upload_val}\`"
+}
+
 cmd_help() {
     local chat_id="$1"
 
     send_message "$chat_id" "*🤖 Команды бота:*
 
 /status — Статус всех сервисов
-/restart — Перезапуск прокси
-/restartall — Перезапуск всех сервисов
+/restart — Перезапуск прокси (Германия)
+/restartall — Перезапуск всех сервисов (Германия)
+/restart\_pl — Перезапуск прокси (Польша)
+/restartall\_pl — Перезапуск всех сервисов (Польша)
 /logs — Последние логи прокси
 /traffic — Статистика трафика
 /ip — IP и ссылка прокси
 /ping — Проверка доступности прокси
 /qr — QR-код со ссылкой прокси
-/servers — Статус всех серверов
+/servers — Статус всех серверов с подключениями
+/speedtest — Тест скорости интернета сервера
 /help — Эта справка
 
 *Автоматические уведомления:*
@@ -525,14 +678,17 @@ except:
 
         case "$text" in
             /status)     cmd_status "$chat_id" ;;
-            /restart)    cmd_restart "$chat_id" ;;
-            /restartall) cmd_restart_all "$chat_id" ;;
+            /restart)       cmd_restart "$chat_id" ;;
+            /restartall)    cmd_restart_all "$chat_id" ;;
+            /restart_pl)    cmd_restart_poland "$chat_id" ;;
+            /restartall_pl) cmd_restartall_poland "$chat_id" ;;
             /logs)       cmd_logs "$chat_id" ;;
             /traffic)    cmd_traffic "$chat_id" ;;
             /ip)         cmd_ip "$chat_id" ;;
             /ping)       cmd_ping "$chat_id" ;;
             /qr)         cmd_qr "$chat_id" ;;
             /servers)    cmd_servers "$chat_id" ;;
+            /speedtest)  cmd_speedtest "$chat_id" ;;
             /help|/start) cmd_help "$chat_id" ;;
             *)           send_message "$chat_id" "Неизвестная команда. /help" ;;
         esac
